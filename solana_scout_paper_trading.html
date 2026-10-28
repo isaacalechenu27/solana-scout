@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solana Scout — Paper Trading</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#17221c;background:#f4f7f4;--green:#176b45;--line:#dce5de;--muted:#607067;--card:#fff}
+*{box-sizing:border-box}body{margin:0}header{background:#102d21;color:#fff;padding:22px 16px 18px}header h1{font-size:24px;margin:0 0 5px}header p{margin:0;color:#c8ded1;font-size:13px;line-height:1.45}.wrap{max-width:960px;margin:auto;padding:14px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 12px}.stat,.panel,.coin{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}.stat small{display:block;color:var(--muted);font-size:12px}.stat strong{display:block;font-size:21px;margin-top:5px}.panel{margin-bottom:12px}.panel h2{font-size:16px;margin:0 0 10px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.btn{border:0;border-radius:10px;background:var(--green);color:#fff;padding:11px 13px;font-weight:650;font-size:13px;cursor:pointer}.btn.secondary{background:#e7efe9;color:#184c34}.btn:disabled{opacity:.5}.note{font-size:12px;color:var(--muted);line-height:1.5}.status{font-size:13px;padding:10px;border-radius:10px;background:#eef4ef;margin-top:10px;line-height:1.45}.status.error{background:#fff0ed;color:#8d2d1b}.filters{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}.filters label{font-size:12px;color:var(--muted)}input,select{display:block;width:100%;padding:10px;border:1px solid var(--line);border-radius:9px;background:#fff;margin-top:5px;color:#17221c}.coins{display:grid;gap:10px}.coinhead{display:flex;justify-content:space-between;gap:10px}.coin h3{font-size:15px;margin:0 0 3px;overflow-wrap:anywhere}.addr{font-size:11px;color:var(--muted);overflow-wrap:anywhere}.pill{font-size:11px;border-radius:20px;padding:5px 8px;background:#e8f4eb;color:#1b603b;height:max-content;white-space:nowrap}.pill.warn{background:#fff0d8;color:#815000}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}.metrics div{background:#f5f8f5;border-radius:8px;padding:8px}.metrics small{display:block;font-size:10px;color:var(--muted)}.metrics strong{font-size:13px;display:block;margin-top:3px}.coin .row{justify-content:space-between}.empty{padding:22px;text-align:center;color:var(--muted);font-size:13px}.trade{border-bottom:1px solid var(--line);padding:10px 0;font-size:13px}.trade:last-child{border:0}.positive{color:#177245}.negative{color:#b33125}footer{padding:8px 2px 28px;font-size:11px;color:var(--muted);line-height:1.5}@media(min-width:650px){.stats{grid-template-columns:repeat(4,minmax(0,1fr))}.filters{grid-template-columns:repeat(4,1fr)}.coins{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<header><div class="wrap" style="padding:0"><h1>🌱 Solana Scout</h1><p>Early-entry research · virtual money only · no wallet connection or real trades</p></div></header>
+<main class="wrap">
+<div class="stats">
+ <div class="stat"><small>Virtual cash</small><strong id="cash">$10.00</strong></div>
+ <div class="stat"><small>Open positions</small><strong id="openCount">0</strong></div>
+ <div class="stat"><small>Realized P&amp;L</small><strong id="pnl">$0.00</strong></div>
+ <div class="stat"><small>Closed trades</small><strong id="closedCount">0</strong></div>
+</div>
+<section class="panel">
+<h2>Find candidates</h2>
+<p class="note">Loads recent token profiles and checks their Solana trading pairs. This is a rough discovery feed, not a complete list of new launches. Data may be delayed or unavailable from some browsers.</p>
+<div class="filters">
+<label>Minimum liquidity ($)<input id="minLiq" type="number" min="0" value="10000"></label>
+<label>Maximum pair age (minutes)<input id="maxAge" type="number" min="1" value="15"></label>
+<label>Minimum score<input id="minScore" type="number" min="0" max="100" value="70"></label>
+<label>Virtual position size ($)<input id="size" type="number" min="0.1" step="0.1" value="1"></label>
+</div>
+<div class="row"><button class="btn" id="scan">Scan market</button><button class="btn secondary" id="refresh" disabled>Refresh prices</button><button class="btn secondary" id="reset">Reset paper account</button></div>
+<div id="status" class="status">Ready. Tap “Scan market” to request public market data.</div>
+</section>
+<section class="panel"><h2>Research candidates</h2><div id="coins" class="coins"><div class="empty">No scan yet.</div></div></section>
+<section class="panel"><h2>Open paper positions</h2><div id="positions"><div class="empty">No open positions.</div></div></section>
+<section class="panel"><h2>Trade history</h2><div id="history"><div class="empty">No closed trades yet.</div></div></section>
+<footer><strong>Risk note:</strong> Scores are experimental rankings, not odds of profit or safety certifications. This prototype does not reliably verify holder concentration, honeypots, or executable sell liquidity. Price-based exits can miss sudden crashes, failed sells and liquidity removal. No real trading is performed. Paper results do not predict live performance.</footer>
+</main>
+<script>
+const API='https://api.dexscreener.com';
+const $=id=>document.getElementById(id);
+let candidates=[], busy=false;
+const fresh=()=>({cash:10,initial:10,positions:[],history:[],realized:0});
+let state;
+try{state=JSON.parse(localStorage.getItem('solanaScoutPaper')||'null')||fresh()}catch(e){state=fresh()}
+const money=n=>'$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
+const short=s=>s?String(s).slice(0,5)+'…'+String(s).slice(-5):'—';
+function save(){localStorage.setItem('solanaScoutPaper',JSON.stringify(state));renderAccount()}
+function ageMinutes(pair){let t=pair.pairCreatedAt;return t?(Date.now()-t)/60000:Infinity}
+function scorePair(p){
+ const liq=Number(p.liquidity?.usd||0), vol=Number(p.volume?.m5||0), buys=Number(p.txns?.m5?.buys||0), sells=Number(p.txns?.m5?.sells||0), age=ageMinutes(p);
+ let s=0;
+ s+=Math.min(25,25*liq/25000);
+ const activity=buys+sells;
+ s+=Math.min(25,activity?25*buys/Math.max(1,buys+sells):0);
+ const change=Number(p.priceChange?.m5||0);
+ s+=Math.max(0,Math.min(20,10+change));
+ s+=liq>=10000?10:0;
+ s+=age<=15?10:age<=60?5:0;
+ s+=vol>0?10:0;
+ return Math.round(Math.max(0,Math.min(100,s)));
+}
+function renderAccount(){
+ $('cash').textContent=money(state.cash);
+ $('openCount').textContent=state.positions.length;
+ $('pnl').textContent=money(state.realized);
+ $('pnl').className=state.realized>=0?'positive':'negative';
+ $('closedCount').textContent=state.history.length;
+ renderPositions();renderHistory();
+}
+function renderCandidates(){
+ const minL=Number($('minLiq').value)||0, maxA=Number($('maxAge').value)||15,minS=Number($('minScore').value)||0;
+ const filtered=candidates.filter(c=>c.liq>=minL&&c.age<=maxA&&c.score>=minS).sort((a,b)=>b.score-a.score);
+ if(!filtered.length){$('coins').innerHTML='<div class="empty">No candidates match these filters. Try widening the limits or scan again.</div>';return}
+ $('coins').innerHTML=filtered.slice(0,30).map(c=>{
+ const open=state.positions.some(p=>p.token===c.token);
+ const change=Number(c.change||0);
+ return `<article class="coin"><div class="coinhead"><div><h3>${esc(c.name)} (${esc(c.symbol)})</h3><div class="addr">${esc(short(c.token))} · ${esc(c.dex||'DEX pair')}</div></div><span class="pill ${c.score<70?'warn':''}">Score ${c.score}/100</span></div>
+ <div class="metrics"><div><small>Price</small><strong>${money(c.price)}</strong></div><div><small>Liquidity</small><strong>${money(c.liq)}</strong></div><div><small>Pair age</small><strong>${Number.isFinite(c.age)?c.age.toFixed(1)+' min':'unknown'}</strong></div><div><small>5m volume</small><strong>${money(c.vol)}</strong></div><div><small>5m buys/sells</small><strong>${c.buys}/${c.sells}</strong></div><div><small>5m change</small><strong class="${change>=0?'positive':'negative'}">${change.toFixed(2)}%</strong></div></div>
+ <div class="row"><button class="btn secondary" onclick="copyAddress('${c.token}')">Copy address</button><button class="btn" ${open||c.price<=0?'disabled':''} onclick="paperBuy('${c.token}')">${open?'Position open':'Paper buy'}</button></div>
+ <p class="note">Score is a simple heuristic. It does not confirm holder distribution, authority risk or whether a sell will succeed.</p></article>`;
+ }).join('');
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function scan(){
+ if(busy)return;busy=true;$('scan').disabled=true;$('status').className='status';$('status').textContent='Fetching public token profiles…';
+ try{
+  const r=await fetch(API+'/token-profiles/latest/v1');if(!r.ok)throw new Error('Market-data endpoint returned HTTP '+r.status);
+  const profiles=await r.json();const sols=(Array.isArray(profiles)?profiles:[]).filter(x=>x.chainId==='solana').slice(0,35);
+  $('status').textContent=`Found ${sols.length} recent Solana profiles. Looking up their trading pairs…`;
+  const results=await Promise.all(sols.map(async x=>{try{const rr=await fetch(API+'/token-pairs/v1/solana/'+encodeURIComponent(x.tokenAddress));if(!rr.ok)return null;const ps=await rr.json();if(!Array.isArray(ps))return null;return ps.map(p=>({...p,profile:x})).sort((a,b)=>(Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]||null}catch(e){return null}}));
+  const seen=new Set();candidates=results.filter(p=>p&&p.baseToken?.address&&!seen.has(p.baseToken.address)&&seen.add(p.baseToken.address)).map(p=>({token:p.baseToken.address,name:p.baseToken.name||p.profile?.description||'Unknown token',symbol:p.baseToken.symbol||'?',price:Number(p.priceUsd)||0,liq:Number(p.liquidity?.usd)||0,vol:Number(p.volume?.m5)||0,buys:Number(p.txns?.m5?.buys)||0,sells:Number(p.txns?.m5?.sells)||0,change:Number(p.priceChange?.m5)||0,age:ageMinutes(p),score:scorePair(p),dex:p.dexId,pair:p.pairAddress,profile:p.profile})).filter(c=>c.price>0);
+  renderCandidates();$('refresh').disabled=!candidates.length;
+  $('status').textContent=`Scan complete: ${candidates.length} tokens had usable pair data. Apply filters and inspect risk before simulating a trade.`;
+ }catch(e){$('status').className='status error';$('status').textContent='Could not load live data. Your browser or network may block the request, or the public API may be temporarily unavailable. Try again later. Details: '+e.message}
+ finally{busy=false;$('scan').disabled=false}
+}
+async function refreshPrices(){
+ if(!candidates.length)return;
+ $('status').textContent='Refreshing current prices…';
+ const tokens=[...new Set([...candidates.map(c=>c.token),...state.positions.map(p=>p.token)])];
+ for(const token of tokens){try{const r=await fetch(API+'/token-pairs/v1/solana/'+encodeURIComponent(token));if(!r.ok)continue;const ps=await r.json();if(!Array.isArray(ps)||!ps.length)continue;const p=ps.sort((a,b)=>(Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];const price=Number(p.priceUsd)||0;if(price>0){const c=candidates.find(x=>x.token===token);if(c){c.price=price;c.liq=Number(p.liquidity?.usd)||c.liq;c.vol=Number(p.volume?.m5)||c.vol;c.buys=Number(p.txns?.m5?.buys)||0;c.sells=Number(p.txns?.m5?.sells)||0;c.change=Number(p.priceChange?.m5)||0;c.score=scorePair(p)}const pos=state.positions.find(x=>x.token===token);if(pos)pos.lastPrice=price}}catch(e){}}
+ renderCandidates();save();$('status').textContent='Prices refreshed where data was available. Paper exits still require your confirmation.';
+}
+function paperBuy(token){
+ const c=candidates.find(x=>x.token===token);if(!c||c.price<=0)return;
+ const size=Number($('size').value)||1;if(size<=0||size>state.cash){alert('Position size must be positive and no greater than available virtual cash.');return}
+ if(state.positions.some(p=>p.token===token)){alert('This token already has an open paper position.');return}
+ const slip=0.02;const entry=c.price*(1+slip);
+ state.cash-=size;
+ state.positions.push({token,name:c.name,symbol:c.symbol,size,entry,entryPrice:c.price,units:size/entry,lastPrice:c.price,openedAt:new Date().toISOString(),score:c.score,entrySlip:slip});
+ save();renderCandidates();$('status').textContent='Paper position opened using a 2% illustrative entry-slippage assumption. No real trade was made.';
+}
+function paperSell(token){
+ const p=state.positions.find(x=>x.token===token);if(!p)return;
+ const c=candidates.find(x=>x.token===token);const price=c?.price||p.lastPrice||p.entry;
+ const slip=.03;const exit=price*(1-slip);const proceeds=p.units*exit;const pnl=proceeds-p.size;
+ state.cash+=proceeds;state.realized+=pnl;
+ state.history.unshift({name:p.name,symbol:p.symbol,token:p.token,size:p.size,entry:p.entry,exit,proceeds,pnl,openedAt:p.openedAt,closedAt:new Date().toISOString(),score:p.score});
+ state.positions=state.positions.filter(x=>x.token!==token);save();renderCandidates();$('status').textContent='Paper position closed. Estimated exit includes 3% illustrative slippage; actual exits may be worse or impossible.';
+}
+function renderPositions(){
+ if(!state.positions.length){$('positions').innerHTML='<div class="empty">No open positions.</div>';return}
+ $('positions').innerHTML=state.positions.map(p=>{const c=candidates.find(x=>x.token===p.token),price=c?.price||p.lastPrice||p.entry, val=p.units*price,unreal=val-p.size;return `<div class="trade"><strong>${esc(p.name)} (${esc(p.symbol)})</strong><p class="note">Entry ${money(p.entry)} · Last ${money(price)} · Virtual stake ${money(p.size)}</p><p>Estimated value: <strong>${money(val)}</strong> · Unrealized P&amp;L: <strong class="${unreal>=0?'positive':'negative'}">${money(unreal)}</strong></p><button class="btn" onclick="paperSell('${p.token}')">Close paper position</button></div>`}).join('');
+}
+function renderHistory(){
+ if(!state.history.length){$('history').innerHTML='<div class="empty">No closed trades yet.</div>';return}
+ $('history').innerHTML=state.history.slice(0,50).map(t=>`<div class="trade"><strong>${esc(t.name)} (${esc(t.symbol)})</strong><p class="note">${new Date(t.closedAt).toLocaleString()} · Stake ${money(t.size)}</p><span class="${t.pnl>=0?'positive':'negative'}">Net simulated P&amp;L: ${money(t.pnl)}</span></div>`).join('');
+}
+function copyAddress(t){if(navigator.clipboard?.writeText)navigator.clipboard.writeText(t).then(()=>alert('Token address copied.')).catch(()=>prompt('Copy token address:',t));else prompt('Copy token address:',t)}
+$('scan').addEventListener('click',scan);$('refresh').addEventListener('click',refreshPrices);
+$('reset').addEventListener('click',()=>{if(confirm('Reset the virtual account and delete its local paper-trade history?')){state=fresh();save();renderCandidates();$('status').textContent='Paper account reset. No real funds were affected.'}});
+['minLiq','maxAge','minScore'].forEach(id=>$(id).addEventListener('change',renderCandidates));
+renderAccount();
+</script>
+</body>
+</html>
